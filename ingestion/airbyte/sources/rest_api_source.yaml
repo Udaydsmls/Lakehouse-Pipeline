@@ -1,0 +1,20 @@
+source_type: http_request
+name: product-catalogue-api
+config:
+  base_url: "${PRODUCT_API_BASE_URL}"
+  auth_type: bearer_token
+  auth_token: "${PRODUCT_API_TOKEN}"
+  streams:
+    - name: products
+      path: /v1/products
+      method: GET
+      pagination:
+        type: page_increment
+        page_size: 100
+        page_param: page
+      cursor_field: updated_at
+      sync_mode: incremental
+    - name: categories
+      path: /v1/categories
+      method: GET
+      sync_mode: full_refresh

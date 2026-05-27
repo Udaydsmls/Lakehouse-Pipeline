@@ -1,0 +1,51 @@
+version: 2
+sources:
+  - name: raw
+    database: LAKEHOUSE
+    schema: RAW
+    description: "Raw data synced by Airbyte from PostgreSQL and REST API"
+    freshness:
+      warn_after: {count: 6, period: hour}
+      error_after: {count: 24, period: hour}
+    loaded_at_field: _airbyte_emitted_at
+    tables:
+      - name: orders
+        description: "Raw orders from PostgreSQL via CDC"
+        columns:
+          - name: order_id
+            tests: [unique, not_null]
+          - name: user_id
+            tests: [not_null]
+          - name: total_amount
+            tests:
+              - not_null
+              - dbt_utils.accepted_range:
+                  min_value: 0
+      - name: order_items
+        columns:
+          - name: order_item_id
+            tests: [unique, not_null]
+      - name: users
+        columns:
+          - name: user_id
+            tests: [unique, not_null]
+          - name: email
+            tests: [not_null, unique]
+      - name: products
+        columns:
+          - name: product_id
+            tests: [unique, not_null]
+      - name: categories
+        columns:
+          - name: category_id
+            tests: [unique, not_null]
+  - name: external
+    database: LAKEHOUSE
+    schema: EXTERNAL
+    description: "External tables pointing to Delta Lake Parquet on S3"
+    tables:
+      - name: user_features
+      - name: product_performance
+      - name: conversion_funnel
+      - name: user_sessions
+      - name: product_similarities

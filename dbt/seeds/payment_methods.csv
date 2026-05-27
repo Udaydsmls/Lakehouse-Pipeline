@@ -1,0 +1,7 @@
+payment_method_code,payment_method_name,payment_category,is_buy_now_pay_later
+credit_card,Credit Card,card,false
+debit_card,Debit Card,card,false
+paypal,PayPal,digital_wallet,false
+buy_now_pay_later,Buy Now Pay Later,bnpl,true
+crypto,Cryptocurrency,crypto,false
+bank_transfer,Bank Transfer,bank,false

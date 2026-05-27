@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "OrderEvent",
+  "namespace": "com.lakehouse.order",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "order_id", "type": "string"},
+    {"name": "event_type", "type": {"type": "enum", "name": "OrderEventType", "symbols": ["order_placed","order_confirmed","order_shipped","order_delivered","order_cancelled","return_requested","return_completed"]}},
+    {"name": "user_id", "type": "string"},
+    {"name": "product_ids", "type": {"type": "array", "items": "string"}},
+    {"name": "total_amount", "type": "double"},
+    {"name": "discount_amount", "type": "double"},
+    {"name": "payment_method", "type": "string"},
+    {"name": "shipping_address_country", "type": "string"},
+    {"name": "status", "type": "string"},
+    {"name": "timestamp", "type": "string"}
+  ]
+}

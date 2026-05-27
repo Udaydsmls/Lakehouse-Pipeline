@@ -1,0 +1,211 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "Order-grain fact table enriched with item-level aggregates and category diversity."
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to dim_users"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_users')
+              field: user_id
+      - name: ordered_at
+        description: "UTC timestamp of order placement"
+        tests:
+          - not_null
+      - name: order_date
+        description: "Calendar date of order"
+      - name: order_week
+        description: "ISO week start date of order"
+      - name: order_month
+        description: "Calendar month start date of order"
+      - name: status
+        description: "Current order status"
+      - name: payment_method
+        description: "Payment method used"
+      - name: shipping_country
+        description: "Destination country code"
+      - name: total_amount
+        description: "Gross order value"
+      - name: discount_amount
+        description: "Total discount applied"
+      - name: net_amount
+        description: "Order value after discounts"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: is_cancelled
+        description: "True when order is in cancelled status"
+      - name: is_returned
+        description: "True when order is in return_requested or return_completed status"
+      - name: item_count
+        description: "Count of distinct line items"
+      - name: distinct_product_count
+        description: "Count of distinct products ordered"
+      - name: total_quantity
+        description: "Sum of all unit quantities"
+      - name: category_count
+        description: "Number of distinct product categories in this order"
+      - name: categories_purchased
+        description: "Comma-separated sorted list of product categories"
+
+  - name: dim_users
+    description: "SCD Type 1 user dimension enriched with 180-day behavioural features from the feature store."
+    columns:
+      - name: user_id
+        description: "Unique user identifier"
+        tests:
+          - unique
+          - not_null
+      - name: email
+        description: "Lowercased user email"
+      - name: email_domain
+        description: "Domain portion of the email"
+      - name: country
+        description: "User country code"
+      - name: acquisition_channel
+        description: "Channel that drove registration"
+      - name: segment
+        description: "Marketing segment label"
+      - name: is_email_verified
+        description: "Whether email has been verified"
+      - name: registered_at
+        description: "Account creation timestamp"
+      - name: days_since_registration
+        description: "Days elapsed since account creation"
+      - name: purchase_count_180d
+        description: "Number of purchases in trailing 180 days"
+      - name: total_spend_180d
+        description: "Total spend in trailing 180 days"
+      - name: avg_order_value_180d
+        description: "Average order value in trailing 180 days"
+      - name: days_since_last_purchase
+        description: "Days since most recent purchase"
+      - name: days_since_last_visit
+        description: "Days since most recent site visit"
+      - name: favourite_category
+        description: "Category with highest purchase frequency"
+      - name: rfm_segment
+        description: "RFM segment label from feature store"
+      - name: ltv_estimate
+        description: "Predicted lifetime value in dollars"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: dbt_updated_at
+        description: "Timestamp when this row was last refreshed by dbt"
+
+  - name: dim_products
+    description: "Product dimension enriched with trailing 30-day engagement metrics."
+    columns:
+      - name: product_id
+        description: "Unique product identifier"
+        tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: "Display name of the product"
+      - name: category
+        description: "Top-level product category"
+      - name: subcategory
+        description: "Product subcategory"
+      - name: brand
+        description: "Product brand"
+      - name: base_price
+        description: "Listed price in dollars"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: is_active
+        description: "Whether the product is currently available"
+      - name: created_at
+        description: "Timestamp of product creation"
+      - name: total_views_30d
+        description: "Total product page views in the last 30 days"
+      - name: total_add_to_cart_30d
+        description: "Total add-to-cart events in the last 30 days"
+      - name: avg_cart_abandonment_rate_30d
+        description: "Average cart abandonment rate over the last 30 days"
+      - name: unique_users_30d
+        description: "Count of unique users who viewed this product in 30 days"
+
+  - name: mart_conversion_funnel
+    description: "Daily conversion funnel metrics combining session behaviour with order revenue."
+    columns:
+      - name: date
+        description: "Session date"
+        tests:
+          - not_null
+          - unique
+      - name: total_sessions
+        description: "Total sessions on this date"
+      - name: unique_users
+        description: "Distinct users with sessions on this date"
+      - name: sessions_with_cart
+        description: "Sessions where at least one item was added to cart"
+      - name: sessions_with_checkout
+        description: "Sessions where checkout was initiated"
+      - name: sessions_with_purchase
+        description: "Sessions that resulted in a completed purchase"
+      - name: bounce_sessions
+        description: "Sessions classified as bounces"
+      - name: avg_session_duration_seconds
+        description: "Mean session length in seconds"
+      - name: avg_pages_viewed
+        description: "Mean pages viewed per session"
+      - name: browse_to_cart_rate
+        description: "Fraction of sessions that added to cart"
+      - name: cart_to_checkout_rate
+        description: "Fraction of cart sessions that reached checkout"
+      - name: checkout_to_purchase_rate
+        description: "Fraction of checkout sessions that completed purchase"
+      - name: overall_conversion_rate
+        description: "Fraction of all sessions that resulted in purchase"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1
+      - name: bounce_rate
+        description: "Fraction of sessions classified as bounces"
+      - name: daily_revenue
+        description: "Total net revenue from non-cancelled orders"
+      - name: daily_orders
+        description: "Count of non-cancelled orders"
+      - name: purchasing_users
+        description: "Distinct users who placed a non-cancelled order"
+      - name: avg_order_value
+        description: "Average net order value"
+      - name: revenue_per_user
+        description: "Total revenue divided by unique session users"
+
+  - name: mart_cohort_retention
+    description: "Monthly cohort retention table showing what fraction of each acquisition cohort reordered in subsequent months."
+    columns:
+      - name: cohort_month
+        description: "Month in which users placed their first order"
+        tests:
+          - not_null
+      - name: months_since_acquisition
+        description: "Months elapsed between first_order_month and the observed order_month"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: cohort_size
+        description: "Total number of users in this acquisition cohort"
+      - name: retained_users
+        description: "Number of cohort users active in this month"
+      - name: retention_rate
+        description: "retained_users divided by cohort_size"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 1

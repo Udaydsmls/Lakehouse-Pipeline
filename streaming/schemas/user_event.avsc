@@ -1,0 +1,15 @@
+{
+  "type": "record",
+  "name": "UserEvent",
+  "namespace": "com.lakehouse.user",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "user_id", "type": "string"},
+    {"name": "event_type", "type": {"type": "enum", "name": "UserEventType", "symbols": ["user_registered","profile_updated","email_verified","password_reset","subscription_changed","account_deleted"]}},
+    {"name": "email", "type": "string"},
+    {"name": "country", "type": "string"},
+    {"name": "acquisition_channel", "type": "string"},
+    {"name": "segment", "type": "string"},
+    {"name": "timestamp", "type": "string"}
+  ]
+}

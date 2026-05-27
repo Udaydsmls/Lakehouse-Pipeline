@@ -1,0 +1,159 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "Cleaned and cast orders from Airbyte-synced raw source. Excludes partial syncs."
+    columns:
+      - name: order_id
+        description: "Unique order identifier"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to users"
+        tests:
+          - not_null
+      - name: status
+        description: "Lowercased order status"
+      - name: total_amount
+        description: "Gross order amount in dollars"
+      - name: discount_amount
+        description: "Total discount applied, defaults to 0"
+      - name: net_amount
+        description: "total_amount minus discount_amount"
+      - name: payment_method
+        description: "Lowercased payment method string"
+      - name: shipping_country
+        description: "Uppercased ISO country code from shipping address"
+      - name: ordered_at
+        description: "Timestamp of order creation in UTC"
+      - name: updated_at
+        description: "Timestamp of last order update in UTC"
+      - name: is_cancelled
+        description: "True when status is cancelled"
+      - name: is_returned
+        description: "True when status is return_requested or return_completed"
+
+  - name: stg_order_items
+    description: "Cleaned order line items with computed totals."
+    columns:
+      - name: order_item_id
+        description: "Unique order item identifier"
+        tests:
+          - unique
+          - not_null
+      - name: order_id
+        description: "Foreign key to stg_orders"
+        tests:
+          - not_null
+      - name: product_id
+        description: "Foreign key to stg_products"
+        tests:
+          - not_null
+      - name: quantity
+        description: "Number of units ordered"
+      - name: unit_price
+        description: "Price per unit at time of order"
+      - name: line_total
+        description: "quantity * unit_price before discounts"
+      - name: discount_pct
+        description: "Fractional discount applied to this line item, defaults to 0"
+      - name: discounted_line_total
+        description: "line_total after applying discount_pct"
+
+  - name: stg_users
+    description: "Cleaned user records with computed registration age."
+    columns:
+      - name: user_id
+        description: "Unique user identifier"
+        tests:
+          - unique
+          - not_null
+      - name: email
+        description: "Lowercased and trimmed email address"
+        tests:
+          - unique
+          - not_null
+      - name: email_domain
+        description: "Domain portion of the email address"
+      - name: country
+        description: "Uppercased ISO country code"
+      - name: acquisition_channel
+        description: "Channel through which user was acquired"
+        tests:
+          - accepted_values:
+              values: ['organic', 'paid_search', 'social', 'email', 'referral', 'direct', 'unknown']
+      - name: segment
+        description: "User segment label, defaults to new"
+      - name: is_email_verified
+        description: "Whether the user has verified their email"
+      - name: registered_at
+        description: "UTC timestamp of account creation"
+      - name: last_updated_at
+        description: "UTC timestamp of last profile update"
+      - name: days_since_registration
+        description: "Number of days between registration and today"
+
+  - name: stg_products
+    description: "Cleaned product catalog with standardised category fields."
+    columns:
+      - name: product_id
+        description: "Unique product identifier"
+        tests:
+          - unique
+          - not_null
+      - name: name
+        description: "Trimmed product display name"
+      - name: category
+        description: "Lowercased top-level category"
+      - name: subcategory
+        description: "Lowercased subcategory, defaults to general"
+      - name: brand
+        description: "Title-cased brand name, defaults to Unknown"
+      - name: base_price
+        description: "Listed price in dollars"
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+      - name: is_active
+        description: "Whether the product is currently listed for sale"
+      - name: created_at
+        description: "UTC timestamp of product creation"
+
+  - name: stg_sessions
+    description: "User browsing sessions sourced from external Delta Lake table."
+    columns:
+      - name: session_id
+        description: "Unique session identifier"
+        tests:
+          - not_null
+      - name: user_id
+        description: "User who initiated the session"
+        tests:
+          - not_null
+      - name: session_date
+        description: "Calendar date the session started"
+      - name: session_start
+        description: "UTC timestamp of session start"
+      - name: session_end
+        description: "UTC timestamp of session end"
+      - name: duration_seconds
+        description: "Total session length in seconds"
+      - name: pages_viewed
+        description: "Count of pages viewed during the session"
+      - name: products_viewed
+        description: "Count of product detail pages viewed"
+      - name: searches
+        description: "Count of search queries issued"
+      - name: add_to_cart_count
+        description: "Count of add-to-cart actions"
+      - name: checkout_started
+        description: "True if the user initiated checkout"
+      - name: purchased
+        description: "True if the session resulted in a completed purchase"
+      - name: outcome
+        description: "Categorical outcome label (e.g. bounce, purchase)"
+      - name: device_type
+        description: "Device category used for the session"
+      - name: country
+        description: "Country inferred from session IP"

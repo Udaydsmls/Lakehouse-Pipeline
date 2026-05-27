@@ -1,0 +1,81 @@
+config_version: 3.0
+
+datasources:
+  spark_iceberg_raw:
+    class_name: Datasource
+    module_name: great_expectations.datasource
+    execution_engine:
+      class_name: SparkDFExecutionEngine
+      module_name: great_expectations.execution_engine
+    data_connectors:
+      iceberg_connector:
+        class_name: RuntimeDataConnector
+        module_name: great_expectations.datasource.data_connector
+        batch_identifiers:
+          - pipeline_run_id
+          - processing_date
+
+  spark_delta_curated:
+    class_name: Datasource
+    module_name: great_expectations.datasource
+    execution_engine:
+      class_name: SparkDFExecutionEngine
+      module_name: great_expectations.execution_engine
+    data_connectors:
+      delta_connector:
+        class_name: RuntimeDataConnector
+        module_name: great_expectations.datasource.data_connector
+        batch_identifiers:
+          - pipeline_run_id
+          - processing_date
+
+  snowflake_warehouse:
+    class_name: Datasource
+    module_name: great_expectations.datasource
+    execution_engine:
+      class_name: SqlAlchemyExecutionEngine
+      module_name: great_expectations.execution_engine
+      connection_string: "snowflake://${SNOWFLAKE_USER}:${SNOWFLAKE_PASSWORD}@${SNOWFLAKE_ACCOUNT}/${SNOWFLAKE_DATABASE}/marts?warehouse=${SNOWFLAKE_WAREHOUSE}&role=${SNOWFLAKE_ROLE}"
+    data_connectors:
+      table_connector:
+        class_name: InferredAssetSqlDataConnector
+        module_name: great_expectations.datasource.data_connector
+        name: whole_table
+
+stores:
+  expectations_store:
+    class_name: ExpectationsStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: great_expectations/expectations/
+
+  validations_store:
+    class_name: ValidationsStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: great_expectations/uncommitted/validations/
+
+  checkpoint_store:
+    class_name: CheckpointStore
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: great_expectations/checkpoints/
+
+  evaluation_parameter_store:
+    class_name: EvaluationParameterStore
+
+expectations_store_name: expectations_store
+validations_store_name: validations_store
+checkpoint_store_name: checkpoint_store
+evaluation_parameter_store_name: evaluation_parameter_store
+
+data_docs_sites:
+  local_site:
+    class_name: SiteBuilder
+    show_how_to_buttons: false
+    store_backend:
+      class_name: TupleFilesystemStoreBackend
+      base_directory: great_expectations/uncommitted/data_docs/local_site/
+
+anonymous_usage_statistics:
+  enabled: false
