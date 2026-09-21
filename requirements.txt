@@ -1,34 +1,34 @@
+# Kafka producer
 confluent-kafka==2.3.0
-avro-python3==1.11.3
-fastavro==1.9.4
-faker==24.3.0
-numpy==1.26.4
-pandas==2.2.1
-pyarrow==15.0.2
+
+# Streaming
 apache-flink==1.18.1
-apache-flink-libraries==1.18.1
+
+# Batch
 pyspark==3.5.1
 delta-spark==3.1.0
-ray[data]==2.10.0
-apache-airflow==2.8.3
-apache-airflow-providers-apache-spark==4.7.1
-apache-airflow-providers-slack==8.4.0
-apache-airflow-providers-amazon==8.11.0
+
+# Warehouse / transformations
 dbt-core==1.7.10
-dbt-snowflake==1.7.4
-dbt-bigquery==1.7.5
+dbt-postgres==1.7.9
+
+# Orchestration
+apache-airflow==2.8.3
+
+# Data quality
 great-expectations==0.18.12
-dowhy==0.11.1
-econml==0.15.0
-lifelines==0.27.8
-scipy==1.12.0
-scikit-learn==1.4.1
+
+# Serving API
 fastapi==0.110.0
 uvicorn==0.27.1
-snowflake-connector-python==3.7.1
-boto3==1.34.51
-sqlalchemy==2.0.28
+
+# Shared
+pandas==2.2.1
 psycopg2-binary==2.9.9
-requests==2.31.0
-pydantic==2.6.3
+sqlalchemy==2.0.28
 python-dotenv==1.0.1
+
+# Notebook
+jupyter==1.0.0
+matplotlib==3.8.3
+seaborn==0.13.2

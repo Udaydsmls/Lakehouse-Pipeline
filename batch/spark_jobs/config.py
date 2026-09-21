@@ -1,86 +1,33 @@
+"""Settings for the Spark batch jobs, read from environment variables."""
+
 import os
-from dataclasses import dataclass, field
-from datetime import date, timedelta
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+SPARK_MASTER = os.environ.get("SPARK_MASTER", "local[*]")
 
-def _yesterday() -> str:
-    return (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://localhost:9000")
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
 
+ICEBERG_CATALOG_URI = os.environ.get("ICEBERG_CATALOG_URI", "http://localhost:8181")
+ICEBERG_WAREHOUSE = os.environ.get("ICEBERG_WAREHOUSE", "s3a://lakehouse-raw/warehouse")
 
-@dataclass
-class SparkJobConfig:
-    spark_master: str = field(
-        default_factory=lambda: os.environ.get("SPARK_MASTER", "local[*]")
-    )
-    s3_endpoint: str = field(
-        default_factory=lambda: os.environ.get("S3_ENDPOINT", "http://localhost:9000")
-    )
-    s3_bucket: str = field(
-        default_factory=lambda: os.environ.get("S3_BUCKET", "lakehouse-raw")
-    )
-    aws_access_key_id: str = field(
-        default_factory=lambda: os.environ.get("AWS_ACCESS_KEY_ID", "")
-    )
-    aws_secret_access_key: str = field(
-        default_factory=lambda: os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-    )
-    iceberg_catalog_uri: str = field(
-        default_factory=lambda: os.environ.get("ICEBERG_CATALOG_URI", "http://localhost:8181")
-    )
-    iceberg_warehouse: str = field(
-        default_factory=lambda: os.environ.get(
-            "ICEBERG_WAREHOUSE",
-            f"s3a://{os.environ.get('S3_BUCKET', 'lakehouse-raw')}/warehouse",
-        )
-    )
-    delta_warehouse: str = field(
-        default_factory=lambda: os.environ.get(
-            "DELTA_WAREHOUSE",
-            f"s3a://{os.environ.get('S3_BUCKET', 'lakehouse-raw')}/curated",
-        )
-    )
-    postgres_host: str = field(
-        default_factory=lambda: os.environ.get("POSTGRES_HOST", "localhost")
-    )
-    postgres_port: int = field(
-        default_factory=lambda: int(os.environ.get("POSTGRES_PORT", "5432"))
-    )
-    postgres_db: str = field(
-        default_factory=lambda: os.environ.get("POSTGRES_DB", "ecommerce")
-    )
-    postgres_user: str = field(
-        default_factory=lambda: os.environ.get("POSTGRES_USER", "postgres")
-    )
-    postgres_password: str = field(
-        default_factory=lambda: os.environ.get("POSTGRES_PASSWORD", "")
-    )
-    snowflake_account: str = field(
-        default_factory=lambda: os.environ.get("SNOWFLAKE_ACCOUNT", "")
-    )
-    snowflake_user: str = field(
-        default_factory=lambda: os.environ.get("SNOWFLAKE_USER", "")
-    )
-    snowflake_password: str = field(
-        default_factory=lambda: os.environ.get("SNOWFLAKE_PASSWORD", "")
-    )
-    snowflake_database: str = field(
-        default_factory=lambda: os.environ.get("SNOWFLAKE_DATABASE", "LAKEHOUSE")
-    )
-    snowflake_warehouse: str = field(
-        default_factory=lambda: os.environ.get("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
-    )
-    processing_date: str = field(default_factory=_yesterday)
+# Where the curated Delta tables live.
+DELTA_WAREHOUSE = os.environ.get("DELTA_WAREHOUSE", "s3a://lakehouse-curated")
 
-    @classmethod
-    def from_env(cls) -> "SparkJobConfig":
-        return cls()
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = os.environ.get("POSTGRES_PORT", "5432")
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "ecommerce")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "postgres")
 
-    @property
-    def jdbc_url(self) -> str:
-        return (
-            f"jdbc:postgresql://{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+JDBC_URL = "jdbc:postgresql://%s:%s/%s" % (POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB)
+
+JDBC_PROPERTIES = {
+    "user": POSTGRES_USER,
+    "password": POSTGRES_PASSWORD,
+    "driver": "org.postgresql.Driver",
+}

@@ -1,83 +1,47 @@
+"""Sends fake e-commerce clickstream events to Kafka as JSON.
+
+Each user gets a session id that is reused for a handful of events so that the
+Flink job downstream has something to group into sessions.
+
+Usage:
+    python ingestion/producers/clickstream_producer.py
+"""
+
+import json
 import random
-import sys
 import time
 import uuid
 from datetime import datetime, timezone
 
-from faker import Faker
+from confluent_kafka import Producer
 
-from config import ProducerConfig
-from utils import (
-    hourly_traffic_multiplier,
-    make_producer,
-    pareto_product_id,
-    serialize_avro,
-    get_schema,
-)
-
-fake = Faker()
+import config
 
 EVENT_TYPES = [
     "page_view",
     "product_view",
     "search",
     "add_to_cart",
-    "remove_from_cart",
     "checkout_start",
     "purchase",
 ]
 
-EVENT_WEIGHTS = [0.40, 0.30, 0.15, 0.08, 0.03, 0.02, 0.02]
+# Most events are browsing, very few are purchases.
+EVENT_WEIGHTS = [0.45, 0.30, 0.12, 0.08, 0.03, 0.02]
 
 DEVICE_TYPES = ["desktop", "mobile", "tablet"]
-DEVICE_WEIGHTS = [0.60, 0.30, 0.10]
+COUNTRIES = ["US", "GB", "CA", "DE", "FR", "IN", "AU", "JP", "BR"]
 
-PRODUCT_EVENT_TYPES = {"product_view", "add_to_cart", "remove_from_cart", "checkout_start", "purchase"}
-
-SEARCH_TERMS = [
-    "shoes", "laptop", "headphones", "jacket", "watch", "camera",
-    "phone case", "running shoes", "bluetooth speaker", "backpack",
-    "sunglasses", "yoga mat", "coffee maker", "desk lamp", "gaming mouse",
-]
+# Event types that are about a specific product.
+PRODUCT_EVENTS = {"product_view", "add_to_cart", "checkout_start", "purchase"}
 
 
-def _make_page_url(event_type: str, product_id: str | None, query: str | None = None) -> str:
-    if event_type == "page_view":
-        pages = ["/", "/deals", "/new-arrivals", "/categories", "/about", "/contact"]
-        return random.choice(pages)
-    if event_type in ("product_view", "add_to_cart", "remove_from_cart"):
-        return f"/products/{product_id}"
-    if event_type == "search":
-        term = query or random.choice(SEARCH_TERMS)
-        return f"/search?q={term.replace(' ', '+')}"
-    if event_type == "checkout_start":
-        return "/checkout"
-    if event_type == "purchase":
-        return "/order/confirmation"
-    return "/"
-
-
-def _make_event(config: ProducerConfig, session_id: str) -> dict:
-    event_type = random.choices(EVENT_TYPES, weights=EVENT_WEIGHTS, k=1)[0]
-    user_id = f"usr_{random.randint(1, config.num_users)}"
-    device_type = random.choices(DEVICE_TYPES, weights=DEVICE_WEIGHTS, k=1)[0]
+def make_event(session_id, user_id):
+    event_type = random.choices(EVENT_TYPES, weights=EVENT_WEIGHTS)[0]
 
     product_id = None
-    if event_type in PRODUCT_EVENT_TYPES:
-        pid = pareto_product_id(config.num_products, config.pareto_alpha)
-        product_id = f"prod_{pid}"
-
-    query = random.choice(SEARCH_TERMS) if event_type == "search" else None
-    page_url = _make_page_url(event_type, product_id, query)
-
-    referrers = [
-        "https://www.google.com",
-        "https://www.facebook.com",
-        "https://www.instagram.com",
-        None,
-        None,
-        None,
-    ]
+    if event_type in PRODUCT_EVENTS:
+        product_id = "PROD-%03d" % random.randint(1, config.NUM_PRODUCTS)
 
     return {
         "event_id": str(uuid.uuid4()),
@@ -85,57 +49,54 @@ def _make_event(config: ProducerConfig, session_id: str) -> dict:
         "user_id": user_id,
         "session_id": session_id,
         "product_id": product_id,
-        "page_url": page_url,
-        "referrer": random.choice(referrers),
-        "device_type": device_type,
-        "user_agent": fake.user_agent(),
-        "ip_address": fake.ipv4(),
-        "country": fake.country_code(),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "device_type": random.choice(DEVICE_TYPES),
+        "country": random.choice(COUNTRIES),
+        # Flink parses this format straight into a TIMESTAMP(3) column.
+        "event_time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
     }
 
 
-def run(config: ProducerConfig):
-    schema = get_schema("clickstream")
-    producer = make_producer(config)
-    topic = config.topics["clickstream_raw"]
+def main():
+    producer = Producer({"bootstrap.servers": config.KAFKA_BOOTSTRAP_SERVERS})
+    sleep_seconds = 1.0 / config.EVENTS_PER_SECOND
 
+    # Start a session; after a few events we pretend the user left and start a new one.
+    user_id = "USR-%04d" % random.randint(1, config.NUM_USERS)
     session_id = str(uuid.uuid4())
-    events_in_session = 0
-    session_length = random.randint(3, 20)
+    events_left_in_session = random.randint(3, 15)
 
-    count = 0
+    sent = 0
+    print("Sending events to topic '%s'. Press Ctrl+C to stop." % config.CLICKSTREAM_TOPIC)
+
     try:
         while True:
-            hour = datetime.now(timezone.utc).hour
-            multiplier = hourly_traffic_multiplier(hour)
-            sleep_seconds = (1.0 / max(config.events_per_second * multiplier, 1))
-
-            if events_in_session >= session_length:
+            if events_left_in_session == 0:
+                user_id = "USR-%04d" % random.randint(1, config.NUM_USERS)
                 session_id = str(uuid.uuid4())
-                events_in_session = 0
-                session_length = random.randint(3, 20)
+                events_left_in_session = random.randint(3, 15)
 
-            event = _make_event(config, session_id)
-            payload = serialize_avro(schema, event)
-            producer.produce(topic, key=event["user_id"].encode(), value=payload)
+            event = make_event(session_id, user_id)
+            producer.produce(
+                config.CLICKSTREAM_TOPIC,
+                key=user_id,
+                value=json.dumps(event),
+            )
             producer.poll(0)
 
-            events_in_session += 1
-            count += 1
-
-            if count % 1000 == 0:
-                print(f"[clickstream] produced {count} events", file=sys.stderr)
+            events_left_in_session -= 1
+            sent += 1
+            if sent % 500 == 0:
                 producer.flush()
+                print("sent %d events" % sent)
 
             time.sleep(sleep_seconds)
 
     except KeyboardInterrupt:
-        pass
+        print("\nStopping...")
     finally:
         producer.flush()
-        print(f"[clickstream] shutting down after {count} events", file=sys.stderr)
+        print("Total events sent: %d" % sent)
 
 
 if __name__ == "__main__":
-    run(ProducerConfig())
+    main()

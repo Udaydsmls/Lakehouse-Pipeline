@@ -1,24 +1,13 @@
+# Points dbt at the Postgres container from docker-compose.
 lakehouse:
-  target: snowflake
+  target: dev
   outputs:
-    snowflake:
-      type: snowflake
-      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
-      user: "{{ env_var('SNOWFLAKE_USER') }}"
-      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
-      role: "{{ env_var('SNOWFLAKE_ROLE', 'SYSADMIN') }}"
-      database: "{{ env_var('SNOWFLAKE_DATABASE', 'LAKEHOUSE') }}"
-      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'COMPUTE_WH') }}"
-      schema: staging
-      threads: 8
-      client_session_keep_alive: false
-      query_tag: dbt_lakehouse
-    bigquery:
-      type: bigquery
-      method: service-account
-      project: "{{ env_var('BIGQUERY_PROJECT') }}"
-      dataset: staging
-      threads: 8
-      location: US
-      keyfile: "{{ env_var('BIGQUERY_KEYFILE', '/secrets/bq-keyfile.json') }}"
-      timeout_seconds: 300
+    dev:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'ecommerce') }}"
+      user: "{{ env_var('POSTGRES_USER', 'postgres') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'postgres') }}"
+      schema: public
+      threads: 4

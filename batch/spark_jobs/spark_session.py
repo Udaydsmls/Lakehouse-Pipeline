@@ -1,78 +1,57 @@
-from __future__ import annotations
+"""Builds the SparkSession used by every batch job.
+
+The config is mostly plumbing: Delta Lake extensions, the Iceberg REST catalog
+that Flink writes to, and S3A settings pointed at MinIO.
+"""
 
 from pyspark.sql import SparkSession
 
-from batch.spark_jobs.config import SparkJobConfig
+import config
 
 
-def create_spark_session(
-    app_name: str,
-    config: SparkJobConfig,
-    extra_configs: dict | None = None,
-) -> SparkSession:
-    builder = (
+def create_spark_session(app_name):
+    return (
         SparkSession.builder.appName(app_name)
-        .master(config.spark_master)
-        # Delta Lake extensions
-        .config(
-            "spark.sql.extensions",
-            "io.delta.sql.DeltaSparkSessionExtension",
-        )
+        .master(config.SPARK_MASTER)
+        # Delta Lake (curated zone)
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         .config(
             "spark.sql.catalog.spark_catalog",
             "org.apache.spark.sql.delta.catalog.DeltaCatalog",
         )
-        # Iceberg REST catalog
+        # Iceberg REST catalog (raw zone, written by Flink)
         .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog")
         .config("spark.sql.catalog.lakehouse.type", "rest")
-        .config("spark.sql.catalog.lakehouse.uri", config.iceberg_catalog_uri)
-        .config("spark.sql.catalog.lakehouse.warehouse", config.iceberg_warehouse)
-        .config(
-            "spark.sql.catalog.lakehouse.io-impl",
-            "org.apache.iceberg.aws.s3.S3FileIO",
-        )
-        .config(
-            "spark.sql.catalog.lakehouse.s3.endpoint",
-            config.s3_endpoint,
-        )
+        .config("spark.sql.catalog.lakehouse.uri", config.ICEBERG_CATALOG_URI)
+        .config("spark.sql.catalog.lakehouse.warehouse", config.ICEBERG_WAREHOUSE)
+        .config("spark.sql.catalog.lakehouse.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+        .config("spark.sql.catalog.lakehouse.s3.endpoint", config.S3_ENDPOINT)
         .config("spark.sql.catalog.lakehouse.s3.path-style-access", "true")
-        # S3A filesystem
-        .config("spark.hadoop.fs.s3a.endpoint", config.s3_endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", config.aws_access_key_id)
-        .config("spark.hadoop.fs.s3a.secret.key", config.aws_secret_access_key)
+        # MinIO via the S3A filesystem
+        .config("spark.hadoop.fs.s3a.endpoint", config.S3_ENDPOINT)
+        .config("spark.hadoop.fs.s3a.access.key", config.AWS_ACCESS_KEY_ID)
+        .config("spark.hadoop.fs.s3a.secret.key", config.AWS_SECRET_ACCESS_KEY)
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
-        .config(
-            "spark.hadoop.fs.s3a.impl",
-            "org.apache.hadoop.fs.s3a.S3AFileSystem",
-        )
-        .config(
-            "spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
-        )
-        # Magic committer for high-throughput S3A writes
-        .config(
-            "spark.hadoop.fs.s3a.committer.name",
-            "magic",
-        )
-        .config(
-            "spark.hadoop.mapreduce.outputcommitter.factory.scheme.s3a",
-            "org.apache.hadoop.fs.s3a.commit.S3ACommitterFactory",
-        )
-        .config(
-            "spark.sql.sources.commitProtocolClass",
-            "org.apache.spark.internal.io.cloud.PathOutputCommitProtocol",
-        )
-        .config(
-            "spark.sql.parquet.output.committer.class",
-            "org.apache.spark.internal.io.cloud.BindingParquetOutputCommitter",
-        )
-        # Adaptive query execution
+        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.sql.adaptive.enabled", "true")
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .getOrCreate()
     )
 
-    if extra_configs:
-        for key, value in extra_configs.items():
-            builder = builder.config(key, value)
 
-    return builder.getOrCreate()
+def read_postgres(spark, table):
+    """Read a table from the source Postgres database."""
+    return spark.read.jdbc(
+        url=config.JDBC_URL,
+        table=table,
+        properties=config.JDBC_PROPERTIES,
+    )
+
+
+def write_postgres(df, table):
+    """Overwrite a table in the Postgres `analytics` schema so dbt can read it."""
+    df.write.jdbc(
+        url=config.JDBC_URL,
+        table=table,
+        mode="overwrite",
+        properties=config.JDBC_PROPERTIES,
+    )

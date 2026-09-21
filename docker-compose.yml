@@ -1,28 +1,16 @@
-version: "3.8"
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
-    hostname: zookeeper
     container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 2181 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - lakehouse
 
   kafka:
     image: confluentinc/cp-kafka:7.6.0
-    hostname: kafka
     container_name: kafka
     depends_on:
-      zookeeper:
-        condition: service_healthy
+      - zookeeper
     ports:
       - "9092:9092"
     environment:
@@ -34,53 +22,28 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Saves having to create the clickstream topic by hand.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     healthcheck:
-      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
       interval: 15s
       timeout: 10s
       retries: 10
       start_period: 30s
-    networks:
-      - lakehouse
-
-  schema-registry:
-    image: confluentinc/cp-schema-registry:7.6.0
-    hostname: schema-registry
-    container_name: schema-registry
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8081:8081"
-    environment:
-      SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
-      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
-      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
-    networks:
-      - lakehouse
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
     depends_on:
-      kafka:
-        condition: service_healthy
-      schema-registry:
-        condition: service_started
+      - kafka
     ports:
       - "8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
       DYNAMIC_CONFIG_ENABLED: "true"
-    networks:
-      - lakehouse
 
+  # Stands in for S3 so the whole thing runs locally.
   minio:
     image: minio/minio:RELEASE.2024-02-17T01-15-57Z
     container_name: minio
@@ -94,12 +57,10 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - lakehouse
 
   minio-init:
     image: minio/mc:RELEASE.2024-02-17T01-15-57Z
@@ -112,12 +73,8 @@ services:
         mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin};
         mc mb --ignore-existing local/lakehouse-raw;
         mc mb --ignore-existing local/lakehouse-curated;
-        mc mb --ignore-existing local/lakehouse-logs;
-        mc mb --ignore-existing local/warehouse;
-        echo 'MinIO buckets initialised';
+        echo 'Buckets ready';
       "
-    networks:
-      - lakehouse
 
   postgres:
     image: postgres:16-alpine
@@ -136,8 +93,23 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - lakehouse
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:0.9.0
+    container_name: iceberg-rest
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - "8181:8181"
+    environment:
+      CATALOG_WAREHOUSE: s3://lakehouse-raw/warehouse
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_REGION: us-east-1
 
   flink-jobmanager:
     image: flink:1.18-python3
@@ -148,13 +120,15 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        parallelism.default: 4
-        rest.bind-port: 8081
-        jobmanager.memory.process.size: 1600m
+        parallelism.default: 2
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      ICEBERG_CATALOG_URI: http://iceberg-rest:8181
+      ICEBERG_WAREHOUSE: s3://lakehouse-raw/warehouse
     volumes:
       - ./streaming:/opt/flink/jobs
-    networks:
-      - lakehouse
 
   flink-taskmanager:
     image: flink:1.18-python3
@@ -162,36 +136,18 @@ services:
     depends_on:
       - flink-jobmanager
     command: taskmanager
-    deploy:
-      replicas: 2
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.numberOfTaskSlots: 4
-        taskmanager.memory.process.size: 2048m
-    volumes:
-      - ./streaming:/opt/flink/jobs
-    networks:
-      - lakehouse
-
-  iceberg-rest-catalog:
-    image: tabulario/iceberg-rest:0.9.0
-    container_name: iceberg-rest-catalog
-    depends_on:
-      minio:
-        condition: service_healthy
-    ports:
-      - "8183:8181"
-    environment:
-      CATALOG_WAREHOUSE: s3://lakehouse-raw/warehouse
-      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
-      CATALOG_S3_ENDPOINT: http://minio:9000
-      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      S3_ENDPOINT: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      AWS_REGION: us-east-1
-    networks:
-      - lakehouse
+      ICEBERG_CATALOG_URI: http://iceberg-rest:8181
+      ICEBERG_WAREHOUSE: s3://lakehouse-raw/warehouse
+    volumes:
+      - ./streaming:/opt/flink/jobs
 
   airflow-init:
     image: apache/airflow:2.8.3-python3.11
@@ -199,47 +155,54 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
+    environment: &airflow_env
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
+      AIRFLOW__WEBSERVER__SECRET_KEY: localdevsecret
+      # The Spark jobs, dbt and the quality checks all run inside these
+      # containers, so they need the service hostnames rather than localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ecommerce
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      ICEBERG_CATALOG_URI: http://iceberg-rest:8181
+      ICEBERG_WAREHOUSE: s3a://lakehouse-raw/warehouse
+      DELTA_WAREHOUSE: s3a://lakehouse-curated
+      # Installed on container start so the DAG can run Spark, dbt and GE.
+      _PIP_ADDITIONAL_REQUIREMENTS: >-
+        pyspark==3.5.1 delta-spark==3.1.0 dbt-postgres==1.7.9
+        great-expectations==0.18.12 psycopg2-binary==2.9.9 python-dotenv==1.0.1
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: admin
       _AIRFLOW_WWW_USER_PASSWORD: admin
     command: version
-    networks:
-      - lakehouse
 
   airflow-webserver:
     image: apache/airflow:2.8.3-python3.11
     container_name: airflow-webserver
     depends_on:
-      postgres:
-        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
     ports:
       - "8888:8080"
-    environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres/airflow
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    environment: *airflow_env
     volumes:
       - ./orchestration/dags:/opt/airflow/dags
+      - .:/opt/project
       - airflow_logs:/opt/airflow/logs
     command: webserver
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
-    networks:
-      - lakehouse
+      retries: 10
+      start_period: 120s
 
   airflow-scheduler:
     image: apache/airflow:2.8.3-python3.11
@@ -247,45 +210,29 @@ services:
     depends_on:
       airflow-webserver:
         condition: service_healthy
-    environment:
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres/airflow
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
-      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    environment: *airflow_env
     volumes:
       - ./orchestration/dags:/opt/airflow/dags
+      - .:/opt/project
       - airflow_logs:/opt/airflow/logs
     command: scheduler
-    networks:
-      - lakehouse
 
   metabase:
     image: metabase/metabase:v0.49.2
     container_name: metabase
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - metabase_data:/metabase-data
     environment:
-      MB_DB_TYPE: postgres
-      MB_DB_DBNAME: metabase
-      MB_DB_PORT: 5432
-      MB_DB_USER: postgres
-      MB_DB_PASS: postgres
-      MB_DB_HOST: postgres
-    networks:
-      - lakehouse
+      MB_DB_FILE: /metabase-data/metabase.db
 
 volumes:
   minio_data:
   postgres_data:
   airflow_logs:
+  metabase_data:
 
 networks:
   default:
     name: lakehouse
-  lakehouse:
-    name: lakehouse
-    driver: bridge

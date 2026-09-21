@@ -1,9 +1,0 @@
-acquisition_channel,channel_category,is_paid
-organic,seo,false
-paid_search,sem,true
-social,social,false
-email,crm,false
-referral,referral,false
-direct,direct,false
-paid_social,social,true
-display,display,true

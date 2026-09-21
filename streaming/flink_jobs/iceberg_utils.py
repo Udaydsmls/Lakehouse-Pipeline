@@ -1,103 +1,64 @@
-from __future__ import annotations
+"""Helpers shared by the two Flink jobs.
 
-import io
-from typing import Callable
+Both jobs read the same Kafka topic and write to the same Iceberg catalog, so
+the table definitions live here instead of being copy-pasted.
+"""
 
-import fastavro
-
-from pyflink.table import StreamTableEnvironment
-
-
-def create_iceberg_catalog(config, t_env: StreamTableEnvironment) -> None:
-    t_env.execute_sql(f"""
-        CREATE CATALOG lakehouse WITH (
-            'type' = 'iceberg',
-            'catalog-type' = 'rest',
-            'uri' = '{config.iceberg_catalog_uri}',
-            'warehouse' = '{config.iceberg_warehouse}',
-            's3.endpoint' = '{config.s3_endpoint}',
-            's3.access-key-id' = '{config.aws_access_key_id}',
-            's3.secret-access-key' = '{config.aws_secret_access_key}',
-            's3.path-style-access' = 'true'
-        )
-    """)
+import config
 
 
-def ensure_database(t_env: StreamTableEnvironment, catalog_name: str, database: str) -> None:
+def create_kafka_source(t_env, table_name, consumer_group):
+    """Register the clickstream Kafka topic as a Flink table."""
     t_env.execute_sql(
-        f"CREATE DATABASE IF NOT EXISTS {catalog_name}.{database}"
+        """
+        CREATE TABLE {table} (
+            event_id    STRING,
+            event_type  STRING,
+            user_id     STRING,
+            session_id  STRING,
+            product_id  STRING,
+            device_type STRING,
+            country     STRING,
+            event_time  TIMESTAMP(3),
+            WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND
+        ) WITH (
+            'connector' = 'kafka',
+            'topic' = '{topic}',
+            'properties.bootstrap.servers' = '{servers}',
+            'properties.group.id' = '{group}',
+            'scan.startup.mode' = 'earliest-offset',
+            'format' = 'json',
+            'json.ignore-parse-errors' = 'true'
+        )
+        """.format(
+            table=table_name,
+            topic=config.CLICKSTREAM_TOPIC,
+            servers=config.KAFKA_BOOTSTRAP_SERVERS,
+            group=consumer_group,
+        )
     )
 
 
-def create_windowed_aggregations_table(t_env: StreamTableEnvironment) -> None:
-    t_env.execute_sql("""
-        CREATE TABLE IF NOT EXISTS lakehouse.raw.windowed_product_aggregations (
-            window_start TIMESTAMP(3),
-            window_end TIMESTAMP(3),
-            product_id STRING,
-            views_5m BIGINT,
-            add_to_cart_5m BIGINT,
-            cart_abandonment_rate_5m DOUBLE,
-            unique_users_5m BIGINT
-        ) PARTITIONED BY (days(window_start))
-        WITH (
-            'format-version' = '2',
-            'write.upsert.enabled' = 'true'
+def create_iceberg_catalog(t_env):
+    """Connect to the Iceberg REST catalog and make sure the `raw` database exists."""
+    t_env.execute_sql(
+        """
+        CREATE CATALOG lakehouse WITH (
+            'type' = 'iceberg',
+            'catalog-type' = 'rest',
+            'uri' = '{uri}',
+            'warehouse' = '{warehouse}',
+            's3.endpoint' = '{endpoint}',
+            's3.access-key-id' = '{access_key}',
+            's3.secret-access-key' = '{secret_key}',
+            's3.path-style-access' = 'true'
         )
-    """)
-
-
-def create_windowed_user_aggregations_table(t_env: StreamTableEnvironment) -> None:
-    t_env.execute_sql("""
-        CREATE TABLE IF NOT EXISTS lakehouse.raw.windowed_user_aggregations (
-            window_start TIMESTAMP(3),
-            window_end TIMESTAMP(3),
-            user_id STRING,
-            events_5m BIGINT,
-            page_views_5m BIGINT,
-            product_views_5m BIGINT,
-            searches_5m BIGINT,
-            add_to_cart_5m BIGINT,
-            purchases_5m BIGINT
-        ) PARTITIONED BY (days(window_start))
-        WITH (
-            'format-version' = '2',
-            'write.upsert.enabled' = 'true'
+        """.format(
+            uri=config.ICEBERG_CATALOG_URI,
+            warehouse=config.ICEBERG_WAREHOUSE,
+            endpoint=config.S3_ENDPOINT,
+            access_key=config.AWS_ACCESS_KEY_ID,
+            secret_key=config.AWS_SECRET_ACCESS_KEY,
         )
-    """)
-
-
-def create_user_sessions_table(t_env: StreamTableEnvironment) -> None:
-    t_env.execute_sql("""
-        CREATE TABLE IF NOT EXISTS lakehouse.raw.user_sessions (
-            session_id STRING,
-            user_id STRING,
-            session_start STRING,
-            session_end STRING,
-            duration_seconds INT,
-            pages_viewed INT,
-            products_viewed INT,
-            searches INT,
-            add_to_cart_count INT,
-            checkout_started BOOLEAN,
-            purchased BOOLEAN,
-            outcome STRING,
-            device_type STRING,
-            country STRING
-        ) PARTITIONED BY (bucket(16, user_id))
-        WITH (
-            'format-version' = '2',
-            'write.upsert.enabled' = 'false'
-        )
-    """)
-
-
-def avro_deserializer(schema_dict: dict) -> Callable[[bytes], dict]:
-    parsed_schema = fastavro.parse_schema(schema_dict)
-
-    def deserialize(data: bytes) -> dict:
-        buf = io.BytesIO(data)
-        record = fastavro.schemaless_reader(buf, parsed_schema)
-        return dict(record)
-
-    return deserialize
+    )
+    t_env.execute_sql("CREATE DATABASE IF NOT EXISTS lakehouse.raw")
